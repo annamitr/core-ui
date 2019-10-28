@@ -96,7 +96,8 @@ export default Marionette.View.extend({
     initialize(options) {
         _.defaults(this.options, defaultOptions(options));
         const comparator = factory.getDefaultComparator(this.options.columns);
-        this.columnCollectionDefault = new Backbone.Collection(this.options.columns.map(column => ({ id: column.id, ...column })));
+        this.columnsCollection = new Backbone.Collection(this.options.columns.map(column => ({ id: column.id, ...column })));
+        this.columnCollectionDefault = this.columnsCollection.clone();
         this.collection = factory.createWrappedCollection({ ...this.options, comparator });
         if (this.collection === undefined) {
             throw new Error('You must provide a collection to display.');
@@ -248,18 +249,25 @@ export default Marionette.View.extend({
     },
 
     __onCursorMove(delta, options = {}) {
-        const maxIndex = this.editableCellsIndexes.length - 1;
-        const currentSelectedIndex = this.editableCellsIndexes.indexOf(this.pointedCell);
+        const rangeVisibleCellIndex = this.editableCellsIndexes.filter((indexColumn : number) => {
+            const column = this.options.columns[indexColumn];
+            if (column && column.getStateHidden) {
+                return !column.getStateHidden();
+            }
+            return true;
+        });
+        const maxIndex = rangeVisibleCellIndex.length - 1;
+        const currentSelectedIndex = rangeVisibleCellIndex.indexOf(this.pointedCell);
         const newPosition = Math.min(maxIndex, Math.max(0, currentSelectedIndex + delta));
 
-        const currentSelectedValue = this.editableCellsIndexes[currentSelectedIndex];
-        const newSelectedValue = this.editableCellsIndexes[newPosition];
+        const currentSelectedValue = rangeVisibleCellIndex[currentSelectedIndex];
+        const newSelectedValue = rangeVisibleCellIndex[newPosition];
         const currentModel = this.collection.find(model => model.cid === this.collection.cursorCid);
 
         if (currentModel) {
             if (newSelectedValue === currentSelectedValue && delta !== 0) {
                 const isPositiveDelta = delta >= 1;
-                this.pointedCell = isPositiveDelta ? 0 : this.editableCellsIndexes[this.editableCellsIndexes.length - 1];
+                this.pointedCell = isPositiveDelta ? 0 : rangeVisibleCellIndex[rangeVisibleCellIndex.length - 1];
                 this.collection.trigger(isPositiveDelta ? 'nextModel' : 'prevModel');
                 return;
             }
@@ -315,7 +323,7 @@ export default Marionette.View.extend({
         tools: '.js-grid-tools',
         header: '.js-grid-header-view',
         content: '.js-grid-content',
-        tableWrapper: '.grid-table-wrapper',
+        tableWrapper: '.js-grid-table-wrapper',
         table: '.grid-content-wrp',
         tableTopMostWrapper: '.grid-table-wrapper-war'
     },
@@ -821,7 +829,7 @@ export default Marionette.View.extend({
     __applyFilter(regexp, columns, collection) {
         collection.filter(model => {
             let result = false;
-            const searchableColumns = columns.filter(column => column.searchable !== false).map(column => column.id || column.key);
+            const searchableColumns = columns.filter(column => column.searchable !== false).map(column => column.key);
             searchableColumns.forEach(column => {
                 const values = model.get(column);
                 const testValueFunction = value => {
@@ -907,7 +915,7 @@ export default Marionette.View.extend({
     },
 
     __initTreeEditor() {
-        const columnsCollection = (this.columnsCollection = new Backbone.Collection(this.options.columns.map(column => ({ id: column.id, ...column }))));
+        const columnsCollection = this.columnsCollection;
 
         this.treeModel = new Backbone.Model({
             title: this.options.title,
@@ -931,7 +939,7 @@ export default Marionette.View.extend({
 
         this.listenTo(columnsCollection, 'add', (model: GraphModel) => {
             const configDiff = {
-                oldIndex: this.options.columns.findIndex(col => col.key === model.id),
+                oldIndex: this.options.columns.findIndex(col => col.id === model.id),
                 newIndex: columnsCollection.indexOf(model)
             };
             this.__moveColumn(configDiff);
@@ -943,12 +951,23 @@ export default Marionette.View.extend({
         this.listenTo(columnsCollection, 'change:isHidden', model => {
             this.__setColumnVisibility(model.id, !model.get('isHidden'));
         });
-
         this.listenTo(this.treeEditorView, 'save', (config: ConfigDiff) => this.trigger('treeEditor:save', config));
+    },
+
+    setConfigDiff(configDiff) {
+        this.treeEditorView.setConfigDiff(configDiff);
     },
 
     resetConfigDiff() {
         this.treeEditorView.resetConfigDiff();
+    },
+
+    getConfigDiff() {
+        return this.treeEditorView.getConfigDiff();
+    },
+
+    setVisibleConfigDiffInit() {
+        this.treeEditorView.setVisibleConfigDiffInit();
     },
 
     __setVisibilityAllColumns() {
@@ -1008,22 +1027,19 @@ export default Marionette.View.extend({
         const columns = this.options.columns;
         const index = columns.findIndex(item => item.id === id);
         const columnToBeHidden = columns[index];
-
         if (isHidden) {
             columnToBeHidden.isHidden = isHidden;
         } else {
             delete columnToBeHidden.isHidden;
         }
 
-        this.setClassToColumn(id, isHidden, index, meta.classes.hiddenByTreeEditorClass);
-
-        if (this.isAttached()) {
-            this.__toggleNoColumnsMessage(columns);
-        }
         this.trigger('column:set:isHidden', { id, isHidden });
+
+        this.setClassToColumn(id, isHidden, index, meta.classes.hiddenByTreeEditorClass);
     },
 
     setClassToColumn(id: string, state = false, index: number, classCell: string) {
+        const columns = this.options.columns;
         let elementIndex = index + 1;
         if (this.el.querySelector('.js-cell_selection')) {
             elementIndex += 1;
@@ -1036,17 +1052,22 @@ export default Marionette.View.extend({
         Array.from(this.el.querySelectorAll(cellSelector)).forEach(element => {
             element.classList.toggle(classCell, state);
         });
+        if (this.isAttached()) {
+            this.__toggleNoColumnsMessage(columns);
+        }
     },
 
     updateTreeEditorConfig(arrIdVisibleColumns) {
-        const newColumnsTreeEditor = this.columnCollectionDefault.filter( model => arrIdVisibleColumns.includes(model.get('id')));
+        const newColumnsTreeEditor = this.columnCollectionDefault.filter(model => arrIdVisibleColumns.includes(model.get('id')));
         this.columnsCollection.reset(newColumnsTreeEditor);
     },
 
     __toggleNoColumnsMessage(columns: Array<object>) {
         let hiddenColumnsCounter = 0;
+        let isHidden;
         columns.forEach(col => {
-            if (col.isHidden) {
+            isHidden = col.getStateHidden ? col.getStateHidden() : col.isHidden;
+            if (isHidden) {
                 hiddenColumnsCounter++;
             }
         });
