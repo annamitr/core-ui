@@ -1107,6 +1107,10 @@ a:hover {
     align-items: center;
 }
 
+.split-panel-resizer_container:hover {
+    background-color: #000;
+}
+
 .split-panel-resizer_container.split-panel-resizer_vertical {
     width: 5px;
     height: 100%;
