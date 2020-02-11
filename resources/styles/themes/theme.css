@@ -483,6 +483,7 @@ svg.svg-grid-icons {
   border-top: none;
   position: relative;
 }
+
 .cell:not(:last-child) {
   border-right: none;
 }
@@ -562,6 +563,10 @@ tr.selected .cell,
 tr.selected .cell_selection,
 tr.selected .cell_selection-index{
   background-color: #eaf3f8;
+}
+
+tr:not(:last-child) .cell {
+  border-bottom: none;
 }
 
 .row-checked .cell,
